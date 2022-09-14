@@ -711,6 +711,34 @@ impl Transaction {
         })
     }
 
+    #[cfg_api_versions(min = 710)]
+    pub fn get_mapped_ranges2<'a>(
+        &'a self,
+        begin: Vec<u8>,
+        end: Vec<u8>,
+        mapper: Vec<u8>,
+        snapshot: bool,
+    ) -> impl Stream<Item = FdbResult<MappedKeyValues>> + Send + Sync + Unpin + 'a {
+        let opt = RangeOption::from((begin, end));
+
+        stream::unfold((1, Some(opt)), move |(iteration, maybe_opt)| {
+            if let Some(opt) = maybe_opt {
+                Either::Left(
+                    self.get_mapped_range(&opt, &mapper, iteration as usize, snapshot)
+                        .map(move |maybe_values| {
+                            let next_opt = match &maybe_values {
+                                Ok(values) => opt.next_mapped_range(values),
+                                Err(..) => None,
+                            };
+                            Some((maybe_values, (iteration + 1, next_opt)))
+                        }),
+                )
+            } else {
+                Either::Right(future::ready(None))
+            }
+        })
+    }
+
     /// Modify the database snapshot represented by transaction to remove all keys (if any) which
     /// are lexicographically greater than or equal to the given begin key and lexicographically
     /// less than the given end_key.
