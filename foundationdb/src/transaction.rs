@@ -593,7 +593,7 @@ impl Transaction {
         &'a self,
         opt: RangeOption<'a>,
         snapshot: bool,
-    ) -> impl Stream<Item = FdbResult<FdbValue>> + Unpin + 'a {
+    ) -> impl Stream<Item = FdbResult<FdbValue<'a>>> + Unpin + 'a {
         self.get_ranges(opt, snapshot)
             .map_ok(|values| stream::iter(values.into_iter().map(Ok)))
             .try_flatten()

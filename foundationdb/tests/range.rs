@@ -68,17 +68,17 @@ async fn test_get_range_async() -> FdbResult<()> {
         assert!(range.more());
         let len = range.len();
         let mut i = 0;
-        for kv in &range {
+        for kv in range.as_ref() {
             assert!(!kv.key().is_empty());
             assert!(!kv.value().is_empty());
             i += 1;
         }
         assert_eq!(i, len);
 
-        let refs_asc = (&range).into_iter().collect::<Vec<_>>();
+        let refs_asc = range.iter().collect::<Vec<_>>();
         assert_eq!(
             refs_asc,
-            (&range).into_iter().rev().rev().collect::<Vec<_>>()
+            range.iter().rev().rev().collect::<Vec<_>>()
         );
 
         let owned_asc = trx

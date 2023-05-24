@@ -14,7 +14,7 @@
 //!
 //! More info can be found in the [relevant documentation](https://github.com/apple/foundationdb/wiki/Everything-about-GetMappedRange).
 
-use crate::future::{FdbFutureHandle, FdbKeyValue};
+use crate::future::{FdbFutureHandle, FdbValue};
 use crate::mem::read_unaligned_slice;
 use crate::{error, KeySelector};
 use crate::{FdbError, FdbResult};
@@ -137,12 +137,13 @@ impl FdbMappedKeyValue {
     }
 
     /// retrieves the associated slice of [`FdbKeyValue`]
-    pub fn key_values(&self) -> &[FdbKeyValue] {
+    pub fn key_values<'a>(&self) -> Vec<FdbValue<'a>> {
         unsafe {
-            &*(read_unaligned_slice(
-                self.0.getRange.data as *const FdbKeyValue,
-                self.0.getRange.m_size as usize,
-            ))
+            let raw_slice = read_unaligned_slice(
+                    self.0.getRange.data as *const fdb_sys::FDBKeyValue,
+                    self.0.getRange.m_size as usize,
+            );
+            (*raw_slice).iter().map(|v| (*v).into()).collect()
         }
     }
 }

@@ -12,10 +12,3 @@ pub(crate) unsafe fn read_unaligned_slice<T>(src: *const T, len: usize) -> *cons
     copy_nonoverlapping(src as *const u8, aligned, layout.size());
     std::slice::from_raw_parts(aligned as *const T, len)
 }
-
-pub(crate) unsafe fn read_unaligned_struct<T>(src: *const T) -> *const T {
-    let layout = Layout::new::<T>();
-    let aligned = std::alloc::alloc(layout);
-    copy_nonoverlapping(src as *const u8, aligned, layout.size());
-    aligned as *const T
-}

@@ -24,18 +24,17 @@
 
 use std::convert::TryFrom;
 use std::ffi::CStr;
-use std::fmt;
 use std::ops::Deref;
 use std::os::raw::c_char;
 use std::pin::Pin;
-use std::ptr::NonNull;
+use std::ptr::{read_unaligned, NonNull};
 use std::sync::Arc;
 
 #[cfg_api_versions(min = 700)]
 pub use crate::fdb_keys::FdbKeys;
 #[cfg_api_versions(min = 710)]
 pub use crate::mapped_key_values::MappedKeyValues;
-use crate::mem::{read_unaligned_slice, read_unaligned_struct};
+use crate::mem::read_unaligned_slice;
 use foundationdb_macros::cfg_api_versions;
 use foundationdb_sys as fdb_sys;
 use futures::prelude::*;
@@ -256,226 +255,99 @@ impl AsRef<CStr> for FdbAddress {
 }
 
 /// An slice of keyvalues owned by a foundationDB future
-pub struct FdbValues {
+pub struct FdbValues<'a> {
     _f: FdbFutureHandle,
-    keyvalues: *const fdb_sys::FDBKeyValue,
-    len: i32,
+    keyvalues: Vec<FdbValue<'a>>,
     more: bool,
 }
-unsafe impl Sync for FdbValues {}
-unsafe impl Send for FdbValues {}
 
-impl FdbValues {
+impl FdbValues<'_> {
     /// `true` if there is another range after this one
     pub fn more(&self) -> bool {
         self.more
     }
 }
 
-impl TryFrom<FdbFutureHandle> for FdbValues {
+impl <'a> IntoIterator for FdbValues<'a> {
+    type Item = FdbValue<'a>;
+
+    type IntoIter = <Vec<FdbValue<'a>> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.keyvalues.into_iter()
+    }
+}
+
+impl TryFrom<FdbFutureHandle> for FdbValues<'_> {
     type Error = FdbError;
     fn try_from(f: FdbFutureHandle) -> FdbResult<Self> {
-        let mut keyvalues = std::ptr::null();
+        let mut keyvalues_ptr = std::ptr::null();
         let mut len = 0;
         let mut more = 0;
 
         unsafe {
             error::eval(fdb_sys::fdb_future_get_keyvalue_array(
                 f.as_ptr(),
-                &mut keyvalues,
+                &mut keyvalues_ptr,
                 &mut len,
                 &mut more,
-            ))?
+            ))?;
         }
+
+        let mut keyvalues = Vec::with_capacity(len as usize);
+
+        unsafe {
+            for offset in 0..len as usize {
+                let keyvalue = read_unaligned(keyvalues_ptr.add(offset) as *const fdb_sys::FDBKeyValue);
+                keyvalues.push(keyvalue.into())
+            }
+        };
 
         Ok(FdbValues {
             _f: f,
             keyvalues,
-            len,
             more: more != 0,
         })
     }
 }
 
-impl Deref for FdbValues {
-    type Target = [FdbKeyValue];
+impl <'a> Deref for FdbValues<'a> {
+    type Target = [FdbValue<'a>];
     fn deref(&self) -> &Self::Target {
-        assert_eq_size!(FdbKeyValue, fdb_sys::FDBKeyValue);
-        assert_eq_align!(FdbKeyValue, fdb_sys::FDBKeyValue);
-        unsafe { &*(read_unaligned_slice(self.keyvalues as *const FdbKeyValue, self.len as usize)) }
+        &self.keyvalues
     }
 }
 
-impl AsRef<[FdbKeyValue]> for FdbValues {
-    fn as_ref(&self) -> &[FdbKeyValue] {
+impl <'a> AsRef<[FdbValue<'a>]> for FdbValues<'a> {
+    fn as_ref(&self) -> &[FdbValue<'a>] {
         self.deref()
-    }
-}
-
-impl<'a> IntoIterator for &'a FdbValues {
-    type Item = &'a FdbKeyValue;
-    type IntoIter = std::slice::Iter<'a, FdbKeyValue>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.deref().iter()
-    }
-}
-impl IntoIterator for FdbValues {
-    type Item = FdbValue;
-    type IntoIter = FdbValuesIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        FdbValuesIter {
-            f: Arc::new(self._f),
-            keyvalues: self.keyvalues,
-            len: self.len,
-            pos: 0,
-        }
-    }
-}
-
-/// An iterator of keyvalues owned by a foundationDB future
-pub struct FdbValuesIter {
-    f: Arc<FdbFutureHandle>,
-    keyvalues: *const fdb_sys::FDBKeyValue,
-    len: i32,
-    pos: i32,
-}
-
-unsafe impl Send for FdbValuesIter {}
-
-impl Iterator for FdbValuesIter {
-    type Item = FdbValue;
-    fn next(&mut self) -> Option<Self::Item> {
-        #[allow(clippy::iter_nth_zero)]
-        self.nth(0)
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        let pos = (self.pos as usize).checked_add(n);
-        match pos {
-            Some(pos) if pos < self.len as usize => {
-                // safe because pos < self.len
-                let keyvalue = unsafe { self.keyvalues.add(pos) };
-                self.pos = pos as i32 + 1;
-
-                Some(FdbValue {
-                    _f: self.f.clone(),
-                    keyvalue,
-                })
-            }
-            _ => {
-                self.pos = self.len;
-                None
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let rem = (self.len - self.pos) as usize;
-        (rem, Some(rem))
-    }
-}
-impl ExactSizeIterator for FdbValuesIter {
-    #[inline]
-    fn len(&self) -> usize {
-        (self.len - self.pos) as usize
-    }
-}
-impl DoubleEndedIterator for FdbValuesIter {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.nth_back(0)
-    }
-
-    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        if n < self.len() {
-            self.len -= 1 + n as i32;
-            // safe because len < original len
-            let keyvalue = unsafe { self.keyvalues.add(self.len as usize) };
-            Some(FdbValue {
-                _f: self.f.clone(),
-                keyvalue,
-            })
-        } else {
-            self.pos = self.len;
-            None
-        }
     }
 }
 
 /// A keyvalue you can own
-///
-/// Until dropped, this might prevent multiple key/values from beeing freed.
-/// (i.e. the future that own the data is dropped once all data it provided is dropped)
-pub struct FdbValue {
-    _f: Arc<FdbFutureHandle>,
-    keyvalue: *const fdb_sys::FDBKeyValue,
+#[derive(PartialEq, Eq, Debug)]
+pub struct FdbValue<'a> {
+    key: &'a [u8],
+    value: &'a [u8],
 }
 
-unsafe impl Send for FdbValue {}
-
-impl Deref for FdbValue {
-    type Target = FdbKeyValue;
-    fn deref(&self) -> &Self::Target {
-        assert_eq_size!(FdbKeyValue, fdb_sys::FDBKeyValue);
-        assert_eq_align!(FdbKeyValue, fdb_sys::FDBKeyValue);
-        unsafe { &*(read_unaligned_struct(self.keyvalue as *const FdbKeyValue)) }
-    }
-}
-impl AsRef<FdbKeyValue> for FdbValue {
-    fn as_ref(&self) -> &FdbKeyValue {
-        self.deref()
-    }
-}
-impl PartialEq for FdbValue {
-    fn eq(&self, other: &Self) -> bool {
-        self.deref() == other.deref()
-    }
-}
-impl Eq for FdbValue {}
-impl fmt::Debug for FdbValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.deref().fmt(f)
-    }
-}
-
-/// A keyvalue owned by a foundationDB future
-///
-/// Because the data it represent is owned by the future in FdbValues, you
-/// can never own a FdbKeyValue directly, you can only have references to it.
-/// This way, you can never obtain a lifetime greater than the lifetime of the
-/// slice that gave you access to it.
-#[repr(transparent)]
-pub struct FdbKeyValue(fdb_sys::FDBKeyValue);
-
-impl FdbKeyValue {
-    /// key
+impl FdbValue<'_> {
     pub fn key(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.0.key as *const u8, self.0.key_length as usize) }
+        self.key
     }
 
-    /// value
     pub fn value(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(self.0.value as *const u8, self.0.value_length as usize)
-        }
+        self.value
     }
 }
 
-impl PartialEq for FdbKeyValue {
-    fn eq(&self, other: &Self) -> bool {
-        (self.key(), self.value()) == (other.key(), other.value())
-    }
-}
-impl Eq for FdbKeyValue {}
-impl fmt::Debug for FdbKeyValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "({:?}, {:?})",
-            crate::tuple::Bytes::from(self.key()),
-            crate::tuple::Bytes::from(self.value())
-        )
+impl From<fdb_sys::FDBKeyValue> for FdbValue<'_> {
+    fn from(kv: fdb_sys::FDBKeyValue) -> Self {
+        let key = unsafe { std::slice::from_raw_parts(kv.key as *const u8, kv.key_length as usize) };
+        let value = unsafe {
+            std::slice::from_raw_parts(kv.value as *const u8, kv.value_length as usize)
+        };
+        Self { key, value }
     }
 }
 

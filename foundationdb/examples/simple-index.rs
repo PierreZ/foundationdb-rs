@@ -93,7 +93,7 @@ async fn search_user_by_zipcode(
 
     match result_get_index {
         Ok(results) => {
-            for result in results {
+            for result in results.as_ref() {
                 let (zipcode, id): (String, String) = zipcode_index
                     .unpack(result.key())
                     .expect("Unable to unpack value from index");
