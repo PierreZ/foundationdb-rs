@@ -1,6 +1,6 @@
 [package]
 name = "foundationdb-macros"
-version = "0.1.1"
+version = "0.2.1"
 authors = [
     "Pierre Zemb <contact@pierrezemb.fr>"
 ]
@@ -22,5 +22,5 @@ keywords = ["foundationdb", "proc-macro"]
 proc-macro = true
 
 [dependencies]
-syn = { version = "1.0.98", features = ["full"] }
-quote = "1.0.20"
+syn = { version = "2.0.18", features = ["full"] }
+quote = "1.0.28"
