@@ -8,6 +8,18 @@ on:
   pull_request:
 
 jobs:
+  simulation:
+    name: "Simulation framework"
+    runs-on: ubuntu-latest
+    container:
+      image: foundationdb/build:centos7-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run ls and pwd
+        run: ls && pwd
+
   compatibility:
     name: "Compat ${{ matrix.os }}/${{ matrix.toolchain }}/${{ matrix.fdb_feature_version }}"
 
@@ -57,7 +69,7 @@ jobs:
 
 
   test:
-    name: "Test with ${{ matrix.toolchain }}"
+    name: "Test foundationDB with ${{ matrix.toolchain }}"
     strategy:
       matrix:
         toolchain: ["1.63.0", "stable", "beta", "nightly"]
@@ -86,7 +98,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --features num-bigint,embedded-fdb-include,tenant-experimental
+          args: -p foundationdb --features num-bigint,embedded-fdb-include,tenant-experimental
 
   lint:
     name: Rustfmt / Clippy
@@ -157,7 +169,7 @@ jobs:
         with:
           command: test
           # doc tests are disabled fow now as they do not compile with -Cpanic=abort
-          args: --tests --no-fail-fast --target x86_64-unknown-linux-gnu
+          args: --tests -p foundationdb --no-fail-fast --target x86_64-unknown-linux-gnu
 
       - name: Setup bindingtester
         run: scripts/setup_bindingtester.sh target/x86_64-unknown-linux-gnu/debug/bindingtester
