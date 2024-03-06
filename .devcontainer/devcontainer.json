@@ -1,0 +1,8 @@
+{
+  "image": "foundationdb/build:centos7-20240228040135-fc272dd89b",
+  "postCreateCommand": "bash scripts/setup_foundationdb_centos.sh",
+  "containerEnv": {
+    "FDB_VERSION": "7.3.27",
+    "FDB_API_VERSION": "730"
+  }
+}
